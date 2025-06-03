@@ -1,14 +1,13 @@
 #!/bin/bash
-#author: gobonja
-#Modified by Matti Hyttinen
+# author: Peter Jackson
+# Adapted from content created for timeshift-autosnap by Marko Gobin, Matti Hyttinen, et al.
 
-[ $(findmnt / -no fstype) == "overlay" ] && { echo "==> skipping timeshift-autosnap because system is booted in Live CD mode..."; exit 0; }
-[[ -v SKIP_AUTOSNAP ]] && { echo "==> skipping timeshift-autosnap due SKIP_AUTOSNAP environment variable being set."; exit 0; }
+[ $(findmnt / -no fstype) == "overlay" ] && { echo "==> skipping zfs-autosnap because system is booted in Live CD mode..."; exit 0; }
+[[ -v SKIP_AUTOSNAP ]] && { echo "==> skipping zfs-autosnap due SKIP_AUTOSNAP environment variable being set."; exit 0; }
 
-readonly CONF_FILE=/etc/timeshift-autosnap.conf
+readonly CONF_FILE=/etc/zfs/zfs-autosnap.conf
 readonly SNAPSHOTS_TO_DELETE=$(mktemp -u --tmpdir ${0##*/}.XXXXXXXX)
-
-readonly SNAPSHOT_NAME_DATE_PATTERN="[0-9]\{4\}-[0-9]\{2\}-[0-9]\{2\}_[0-9]\{2\}-[0-9]\{2\}-[0-9]\{2\}"
+readonly SNAPSHOT_NAME_DATE_PATTERN="[0-9]\{4\}-[0-9]\{2\}-[0-9]\{2\}_[0-9]\{2\}:[0-9]\{2\}:[0-9]\{2\}"
 
 get_property() {
     if [ ! -f $CONF_FILE ]; then
@@ -30,35 +29,31 @@ get_property() {
 }
 
 if $(get_property "skipAutosnap" "boolean" "false") ; then
-    echo "==> skipping timeshift-autosnap due skipAutosnap in $CONF_FILE set to TRUE." >&2; exit 0;
+    echo "==> skipping zfs-autosnap due skipAutosnap in $CONF_FILE set to TRUE." >&2; exit 0;
 fi
 
-if $(get_property "skipRsyncAutosnap" "boolean" "false") && ! [ $(findmnt / -no fstype) == "btrfs" ] ; then
-    echo "==> skipping timeshift-autosnap due skipRsyncAutosnap in $CONF_FILE set to TRUE." >&2; exit 0;
-fi
+readonly SNAPSHOT_DESCRIPTION=$(get_property "snapshotDescription" "string" "sysupdate")
+readonly SNAPSHOT_NAME=`date +autosnap_%Y-%m-%d_%H:%M:%S_${SNAPSHOT_DESCRIPTION}`
+rpool=$(get_property "rpool" "string" "rpool/root")
 
-readonly SNAPSHOT_DESCRIPTION=$(get_property "snapshotDescription" "string" "{timeshift-autosnap} {created before upgrade}")
 
-timeshift --create --comments "$SNAPSHOT_DESCRIPTION" || { echo "Unable to run timeshift-autosnap! Please close Timeshift and try again. Script will now exit..." >&2; exit 1; }
+echo "Capturing ${rpool}@${SNAPSHOT_NAME}"
+zfs snapshot -r ${rpool}@${SNAPSHOT_NAME} || { echo "Unable to run zfs-autosnap! Script will now exit..." >&2; exit 1; }
 
 if $(get_property "deleteSnapshots" "boolean" "true") ; then
-    timeshift --list > $SNAPSHOTS_TO_DELETE
-    sed -ni "/$SNAPSHOT_DESCRIPTION/p" $SNAPSHOTS_TO_DELETE
-    sed -ni "s/.*\($SNAPSHOT_NAME_DATE_PATTERN\).*/\1/p" $SNAPSHOTS_TO_DELETE
+    zfs list -t snapshot -r ${rpool} > $SNAPSHOTS_TO_DELETE
+    sed -ni "s/\(autosnap_${SNAPSHOT_NAME_DATE_PATTERN}_${SNAPSHOT_DESCRIPTION}\).*$/\1/p" $SNAPSHOTS_TO_DELETE
 
     count=$(($(sed -n '$=' $SNAPSHOTS_TO_DELETE)-$(get_property "maxSnapshots" "integer" "3")))
 
     if [ "$count" -gt 0 ] ; then
         sed -i $(($count))q $SNAPSHOTS_TO_DELETE
-        
+
         for snapshot in $(cat $SNAPSHOTS_TO_DELETE); do
-            timeshift --delete --snapshot $snapshot
+            echo "cleaning up $snapshot"
+	   zfs destroy $snapshot
         done
     fi
-fi;
-
-if $(get_property "updateGrub" "boolean" "true") && [ "$(pacman -Qs ^grub-btrfs$)" ]; then
-    grub-mkconfig -o /boot/grub/grub.cfg
 fi;
 
 exit 0

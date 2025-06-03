@@ -1,11 +1,14 @@
+#
+# /usr/share/libalpm/hooks/zfs-autosnap.hook
+#
+
 [Trigger]
 Operation = Upgrade
 Type = Package
 Target = *
 
 [Action]
-Description = Creating Timeshift snapshot before upgrade...
-Depends = timeshift
+Description = Creating ZFS snapshot before upgrade...
 When = PreTransaction
-Exec = /usr/bin/timeshift-autosnap
+Exec = /usr/bin/zfs-autosnap
 AbortOnFail
